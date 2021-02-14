@@ -17,7 +17,9 @@ class Agent:
             noise_process,
             layer_dims=[32, 19],
             load=False,
-            tau=0.05):
+            tau=0.05,
+            save_loc='defualt'):
+        self.save_loc = save_loc
         self.noise_process = noise_process
         self.low_action = low_action
         self.high_action = high_action
@@ -44,15 +46,17 @@ class Agent:
 
     def load_models(self):
         try:
-            self.critic = tf.keras.models.load_model('./save/critic')
-            self.actor = tf.keras.models.load_model('./save/actor')
+            self.critic = tf.keras.models \
+                .load_model(f'./save/{self.save_loc}/critic')
+            self.actor = tf.keras.models \
+                .load_model(f'./save/{self.save_loc}/actor')
             return True
         except Exception as err:
             print(err)
 
     def save_models(self):
-        self.actor.save('./save/actor')
-        self.critic.save('./save/critic')
+        self.actor.save(f'./save/{self.save_loc}/actor')
+        self.critic.save(f'./save/{self.save_loc}/critic')
 
     def track_weights(self):
         self._track_model_weights(
@@ -68,12 +72,11 @@ class Agent:
             target_weight.assign(
                 weight * self.tau + target_weight * (1 - self.tau))
 
-    @tf.function
     def get_action(self, state, with_exploration=False):
         action = self.actor(state)*self.high_action
         if with_exploration:
-            action = action + self.noise_process()
-            action = tf.clip_by_value(action,
+            noise = self.noise_process()
+            action = tf.clip_by_value(action + noise,
                                       clip_value_min=self.low_action,
                                       clip_value_max=self.high_action)
         return action

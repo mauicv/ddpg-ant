@@ -2,6 +2,7 @@ import pybullet_envs
 import gym
 import click
 import os
+from pathlib import Path
 import shutil
 from time import time
 import numpy as np
@@ -10,20 +11,19 @@ from src.agent import Agent
 from src.memory import ReplayBuffer
 from src.train import Train
 from src.logging import Logging
-from src.noise import OUNoise, NormalNoise # noqa
+from src.noise import OUNoise, NormalNoise, LinearSegmentNoise, SmoothNoiseND # noqa
 
 
-# ENV_NAME = 'Pendulum-v0'
-ENV_NAME = 'AntBulletEnv-v0'
+ENV_NAME    = 'AntBulletEnv-v0'
 LAYERS_DIMS = [400, 300]
-TAU = 0.001
-SIGMA = 0.15*40
-THETA = 0.2*40
+TAU         = 0.001
+SIGMA       = 0.15*40
+THETA       = 0.2*40
 BUFFER_SIZE = 100000
-BATCH_SIZE = 64
-DISCOUNT = 0.99
-ACTOR_LR = 0.00005
-CRITIC_LR = 0.0005
+BATCH_SIZE  = 64
+DISCOUNT    = 0.99
+ACTOR_LR    = 0.0005
+CRITIC_LR   = 0.005
 
 
 def setup_env():
@@ -37,6 +37,25 @@ def setup_env():
         state_norm_array = np.ones_like(state_norm_array)
     return env, state_space_dim, action_space_dim, state_norm_array, \
         min_action, max_action
+
+def setup_noise(type, action_space_dim):
+    noise_types = {
+        'n': lambda: LinearSegmentNoise(dim=action_space_dim,
+                                        sigma=SIGMA,
+                                        event_prob=0.1),
+        'ou': lambda: OUNoise(dim=action_space_dim,
+                              sigma=SIGMA,
+                              theta=THETA,
+                              dt=1e-2),
+        'snn': lambda: SmoothNoiseND(steps=400,
+                                     num_interp_points=20,
+                                     dim=action_space_dim,
+                                     sigma=SIGMA),
+        'lsn': lambda: NormalNoise(dim=action_space_dim,
+                                   sigma=SIGMA)
+    }
+    return noise_types[type]()
+
 
 
 @click.group(invoke_without_command=True)
@@ -52,35 +71,47 @@ def cli(ctx):
               help='Number of epsiodes of training')
 @click.option('--steps', '-s', default=400, type=int,
               help='Max number of steps per episode')
-def train(ctx, episodes, steps):
-    logger = Logging([
-        'episode',
-        'rewards',
-        'running_40_episode_reward',
-        'episode_length',
-        'epsiode_run_time',
-        'average_step_run_time',
-        'q_loss',
-        'p_loss'
-    ])
+@click.option('--noise-type', '-nt', default='n',
+              help='Noise type, options: lsn, snn, ou, n')
+@click.option('--dir', '-nt', default='defualt',
+              help='Save file location')
+def train(ctx, episodes, steps, noise_type, dir):
+    Path(f"save/{dir}").mkdir(parents=True, exist_ok=True)
+
+    logger = Logging(['episode',
+                      'rewards',
+                      'running_40_episode_reward',
+                      'episode_length',
+                      'epsiode_run_time',
+                      'average_step_run_time',
+                      'q_loss',
+                      'p_loss'],
+                      params={
+                        "ENV_NAME    ": ENV_NAME,
+                        "LAYERS_DIMS ": LAYERS_DIMS,
+                        "TAU         ": TAU,
+                        "SIGMA       ": SIGMA,
+                        "THETA       ": THETA,
+                        "BUFFER_SIZE ": BUFFER_SIZE,
+                        "BATCH_SIZE  ": BATCH_SIZE,
+                        "DISCOUNT    ": DISCOUNT,
+                        "ACTOR_LR    ": ACTOR_LR,
+                        "CRITIC_LR   ": CRITIC_LR,
+                        "NOISE_TYPE  ": noise_type,
+                        "STEPS       ": steps,
+                        "EPISODES    ": episodes,
+                      },
+                      save_loc=dir)
 
     env, state_space_dim, action_space_dim, state_norm_array, min_action, \
         max_action = setup_env()
+
+    noise_process = setup_noise(noise_type, action_space_dim)
 
     replay_buffer = ReplayBuffer(state_space_dim=state_space_dim,
                                  action_space_dim=action_space_dim,
                                  size=BUFFER_SIZE,
                                  sample_size=BATCH_SIZE)
-
-    noise_process = OUNoise(
-        dim=action_space_dim,
-        sigma=SIGMA,
-        theta=THETA,
-        dt=1e-2)
-
-    # noise_process = NormalNoise(
-    #     dim=action_space_dim,
-    #     sigma=SIGMA)
 
     agent = Agent(state_space_dim,
                   action_space_dim,
@@ -89,7 +120,8 @@ def train(ctx, episodes, steps):
                   high_action=max_action,
                   noise_process=noise_process,
                   tau=TAU,
-                  load=True)
+                  load=True,
+                  save_loc=dir)
 
     train = Train(discount_factor=DISCOUNT,
                   actor_learning_rate=ACTOR_LR,
@@ -114,7 +146,7 @@ def train(ctx, episodes, steps):
             step_count += 1
 
             # environment step
-            action = agent.get_action(state[None], with_exploration=True)[0]
+            action = agent.get_action(state[None], with_exploration=False)[0]
             next_state, reward, done, _ = env.step(action)
             replay_buffer.push((state, next_state, action, reward, done))
             state = next_state
@@ -155,19 +187,15 @@ def train(ctx, episodes, steps):
               help='Max number of steps per episode')
 @click.option('--noise', '-n', is_flag=True,
               help='With exploration')
-def play(ctx, steps, noise):
+@click.option('--noise-type', '-nt', default='n',
+              help='Noise type, options: lsn, snn, ou, n')
+@click.option('--dir', '-nt', default='defualt',
+              help='Svae file location')
+def play(ctx, steps, noise, noise_type, dir):
     env, state_space_dim, action_space_dim, state_norm_array, min_action, \
         max_action = setup_env()
 
-    noise_process = OUNoise(
-        dim=action_space_dim,
-        sigma=SIGMA,
-        theta=THETA,
-        dt=1e-2)
-
-    # noise_process = NormalNoise(
-    #     dim=action_space_dim,
-    #     sigma=SIGMA)
+    noise_process = setup_noise(noise_type, action_space_dim)
 
     agent = Agent(state_space_dim,
                   action_space_dim,
@@ -175,6 +203,7 @@ def play(ctx, steps, noise):
                   low_action=min_action,
                   high_action=max_action,
                   noise_process=noise_process,
+                  save_loc=dir,
                   load=True)
     env.render()
     state = env.reset()
@@ -186,22 +215,20 @@ def play(ctx, steps, noise):
         action = agent.get_action(state[None], with_exploration=noise)[0]
         state, reward, done, _ = env \
             .step(action)
-        print(reward)
-        r = r + reward
-        state = state
         env.render()
-    print(r)
 
 @cli.command()
 @click.pass_context
-def clean(ctx):
-    for save_path in os.listdir('save'):
-        path = f'./save/{save_path}'
-        if os.path.isfile(path):
-            os.remove(path)
-        elif os.path.isdir(path):
-            shutil.rmtree(path)
-
+@click.option('--dir', '-nt', default='defualt',
+              help='Save file location')
+@click.option('--all', '-a', is_flag=True,
+              help='Delete all files')
+def clean(ctx, dir, all):
+    if all:
+        for dir in os.listdir('save'):
+            shutil.rmtree(f'save/{dir}')
+    else:
+        shutil.rmtree(f'save/{dir}')
 
 if __name__ == '__main__':
     cli()
