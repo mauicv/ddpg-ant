@@ -75,7 +75,7 @@ def cli(ctx):
               help='Max number of steps per episode')
 @click.option('--noise-type', '-nt', default='n',
               help='Noise type, options: lsn, snn, ou, n')
-@click.option('--dir', '-nt', default='default',
+@click.option('--dir', '-d', default='default',
               help='Save file location')
 def train(ctx, episodes, steps, noise_type, dir):
     Path(f"save/{dir}").mkdir(parents=True, exist_ok=True)
